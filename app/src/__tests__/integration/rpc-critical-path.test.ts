@@ -127,15 +127,20 @@ describe("POST /api/rpc/signup", () => {
     it("calls signup_user with wallet from JWT", async () => {
         const res = await signupHandler(makeRequest({}));
         expect(res.status).toBe(200);
-        expect(mockRpc).toHaveBeenCalledWith("signup_user", { p_wallet: MOCK_WALLET });
+        // p_initial_balance is injected server-side to disambiguate PostgREST overloads
+        expect(mockRpc).toHaveBeenCalledWith(
+            "signup_user",
+            expect.objectContaining({ p_wallet: MOCK_WALLET, p_initial_balance: expect.any(Number) })
+        );
     });
 
-    it("returns Supabase error as 500", async () => {
+    it("returns 500 with generic error on Supabase failure (MED-02)", async () => {
         mockRpc.mockResolvedValue({ data: null, error: { message: "duplicate_user" } });
         const res = await signupHandler(makeRequest({}));
         expect(res.status).toBe(500);
         const body = await parseJson(res);
-        expect(body.error).toBe("duplicate_user");
+        // MED-02 FIX: Raw DB errors are never leaked to the client
+        expect(body.error).toBe("operation_failed");
     });
 });
 
@@ -235,12 +240,13 @@ describe("POST /api/rpc/cast-vote", () => {
         expect(res.status).toBe(400);
     });
 
-    it("returns Supabase error when vote fails", async () => {
+    it("returns 500 with generic error on Supabase failure (MED-02)", async () => {
         mockRpc.mockResolvedValue({ data: null, error: { message: "insufficient_balance" } });
         const res = await castVoteHandler(makeRequest(validBody));
         expect(res.status).toBe(500);
         const body = await parseJson(res);
-        expect(body.error).toBe("insufficient_balance");
+        // MED-02 FIX: Raw DB errors are never leaked to the client
+        expect(body.error).toBe("operation_failed");
     });
 });
 
@@ -257,14 +263,38 @@ describe("POST /api/rpc/settle-poll", () => {
         expect(body.error).toBe("not_admin");
     });
 
-    it("settles poll when caller is admin", async () => {
+    it("settles poll when caller is admin (auto winner)", async () => {
         mockSingle.mockResolvedValue({ data: { wallet: MOCK_WALLET } }); // is admin
         const res = await settlePollHandler(makeRequest(validBody));
         expect(res.status).toBe(200);
         expect(mockRpc).toHaveBeenCalledWith(
             "settle_poll_atomic",
-            expect.objectContaining({ p_wallet: MOCK_WALLET, p_poll_id: "poll-abc" })
+            expect.objectContaining({
+                p_wallet: MOCK_WALLET,
+                p_poll_id: "poll-abc",
+                p_winning_option: 255, // 255 = auto-determine
+            })
         );
+    });
+
+    it("settles poll with explicit winning_option (prediction market override)", async () => {
+        mockSingle.mockResolvedValue({ data: { wallet: MOCK_WALLET } }); // is admin
+        const res = await settlePollHandler(makeRequest({ p_poll_id: "poll-abc", p_winning_option: 1 }));
+        expect(res.status).toBe(200);
+        expect(mockRpc).toHaveBeenCalledWith(
+            "settle_poll_atomic",
+            expect.objectContaining({
+                p_wallet: MOCK_WALLET,
+                p_poll_id: "poll-abc",
+                p_winning_option: 1,
+            })
+        );
+    });
+
+    it("rejects p_winning_option > 19 (only 0-19 and 255 are valid explicit options)", async () => {
+        mockSingle.mockResolvedValue({ data: { wallet: MOCK_WALLET } });
+        const res = await settlePollHandler(makeRequest({ p_poll_id: "poll-abc", p_winning_option: 20 }));
+        expect(res.status).toBe(400);
     });
 
     it("rejects missing p_poll_id with 400", async () => {
@@ -328,7 +358,10 @@ describe("Critical path: signup → create → vote → settle → claim", () =>
         mockRpc.mockResolvedValueOnce({ data: { success: true, balance: 1000 }, error: null });
         const signupRes = await signupHandler(makeRequest({}));
         expect(signupRes.status).toBe(200);
-        expect(mockRpc).toHaveBeenLastCalledWith("signup_user", { p_wallet: cpWallet });
+        expect(mockRpc).toHaveBeenLastCalledWith(
+            "signup_user",
+            expect.objectContaining({ p_wallet: cpWallet })
+        );
 
         // Step 2: Create poll
         mockRpc.mockResolvedValueOnce({ data: { success: true, poll_id: "new-poll" }, error: null });

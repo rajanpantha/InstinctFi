@@ -8,6 +8,7 @@ import {
     rowToUserAccount,
     createPlaceholderUser,
     demoPollToRow,
+    withFreshPeriods,
 } from "../dataConverters";
 
 describe("rowToDemoPoll", () => {
@@ -125,11 +126,14 @@ describe("rowToUserAccount", () => {
         };
         const user = rowToUserAccount(row);
         expect(user.wallet).toBe("wallet-abc");
-        expect(user.balance).toBe(5000000000);
+        // Balance is always 0 from Supabase — on-chain is the sole source of truth
+        expect(user.balance).toBe(0);
         expect(user.signupBonusClaimed).toBe(true);
         expect(user.totalVotesCast).toBe(25);
         expect(user.pollsWon).toBe(4);
         expect(user.pollsCreated).toBe(3);
+        expect(user.totalSpentLamports).toBe(250000000);
+        expect(user.totalWinningsLamports).toBe(400000000);
     });
 
     it("defaults missing numeric fields to 0", () => {
@@ -188,5 +192,81 @@ describe("demoPollToRow (roundtrip)", () => {
         expect(backToRow.options).toEqual(originalRow.options);
         expect(backToRow.vote_counts).toEqual(originalRow.vote_counts);
         expect(backToRow.total_pool_cents).toBe(originalRow.total_pool_cents);
+    });
+});
+
+describe("withFreshPeriods", () => {
+    const NOW = Date.now();
+    const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+    const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
+
+    function makeUser(overrides: Partial<ReturnType<typeof createPlaceholderUser>>) {
+        return { ...createPlaceholderUser("wallet-test"), ...overrides };
+    }
+
+    it("does not reset counters when periods have not elapsed", () => {
+        const user = makeUser({
+            weeklyVotesCast: 5,
+            monthlyVotesCast: 10,
+            weeklyResetTs: NOW - 1000,
+            monthlyResetTs: NOW - 1000,
+        });
+        const refreshed = withFreshPeriods(user);
+        expect(refreshed.weeklyVotesCast).toBe(5);
+        expect(refreshed.monthlyVotesCast).toBe(10);
+    });
+
+    it("resets weekly counters when a week has elapsed", () => {
+        const user = makeUser({
+            weeklyVotesCast: 8,
+            weeklyWinningsLamports: 500,
+            weeklySpentLamports: 200,
+            weeklyPollsWon: 3,
+            weeklyPollsVoted: 5,
+            monthlyVotesCast: 15,
+            weeklyResetTs: NOW - WEEK_MS - 1,
+            monthlyResetTs: NOW - 1000,
+        });
+        const refreshed = withFreshPeriods(user);
+        expect(refreshed.weeklyVotesCast).toBe(0);
+        expect(refreshed.weeklyWinningsLamports).toBe(0);
+        expect(refreshed.weeklySpentLamports).toBe(0);
+        expect(refreshed.weeklyPollsWon).toBe(0);
+        expect(refreshed.weeklyPollsVoted).toBe(0);
+        // Monthly should be untouched
+        expect(refreshed.monthlyVotesCast).toBe(15);
+    });
+
+    it("resets monthly counters when a month has elapsed", () => {
+        const user = makeUser({
+            weeklyVotesCast: 3,
+            monthlyVotesCast: 20,
+            monthlyWinningsLamports: 1000,
+            monthlySpentLamports: 400,
+            monthlyPollsWon: 7,
+            monthlyPollsVoted: 12,
+            weeklyResetTs: NOW - 1000,
+            monthlyResetTs: NOW - MONTH_MS - 1,
+        });
+        const refreshed = withFreshPeriods(user);
+        expect(refreshed.monthlyVotesCast).toBe(0);
+        expect(refreshed.monthlyWinningsLamports).toBe(0);
+        expect(refreshed.monthlySpentLamports).toBe(0);
+        expect(refreshed.monthlyPollsWon).toBe(0);
+        expect(refreshed.monthlyPollsVoted).toBe(0);
+        // Weekly should be untouched
+        expect(refreshed.weeklyVotesCast).toBe(3);
+    });
+
+    it("resets both weekly and monthly when both have elapsed", () => {
+        const user = makeUser({
+            weeklyVotesCast: 5,
+            monthlyVotesCast: 20,
+            weeklyResetTs: NOW - WEEK_MS - 1,
+            monthlyResetTs: NOW - MONTH_MS - 1,
+        });
+        const refreshed = withFreshPeriods(user);
+        expect(refreshed.weeklyVotesCast).toBe(0);
+        expect(refreshed.monthlyVotesCast).toBe(0);
     });
 });

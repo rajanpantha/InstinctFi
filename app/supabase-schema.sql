@@ -360,13 +360,18 @@ $$ language plpgsql security definer;
 -- ============================================================
 -- 8. Atomic settle_poll — winner determination + creator payout
 -- ============================================================
-create or replace function settle_poll_atomic(p_wallet text, p_poll_id text)
+-- p_winning_option: 0–19 = explicit winner (admin override for prediction markets);
+--                  255    = auto-determine from vote counts (default).
+-- Tie detection: when auto-determining, if two or more options share the
+-- maximum vote count the settlement is rejected with 'tied_vote'.
+create or replace function settle_poll_atomic(p_wallet text, p_poll_id text, p_winning_option int default 255)
 returns json as $$
 declare
   v_poll record;
   v_max_votes bigint := 0;
   v_winning_idx int := 0;
   v_total_votes bigint := 0;
+  v_tied_count int := 0;
   v_creator_credit bigint;
   v_is_admin boolean;
   i int;
@@ -380,23 +385,59 @@ begin
     return json_build_object('success', false, 'error', 'already_settled');
   end if;
 
-  -- Authorization: only creator or admin can settle
+  -- Authorization: only admins can settle via this function.
+  --
+  -- NOTE: Previously creators could settle their own polls here. That
+  -- was removed because the API route (settle-poll/route.ts) already
+  -- gates this to admins via createAdminRpcHandler, meaning creators
+  -- could only reach this path by calling Supabase directly (bypassing
+  -- the API). Restricting to admin-only here closes that gap.
+  --
+  -- MIGRATION: If any existing deployment relied on creator self-settle
+  -- via direct Supabase RPC calls, update those workflows to go through
+  -- the admin API endpoint instead.
   v_is_admin := EXISTS (SELECT 1 FROM admin_wallets WHERE wallet = p_wallet);
-  if v_poll.creator != p_wallet and not v_is_admin then
+  if not v_is_admin then
     return json_build_object('success', false, 'error', 'not_authorized');
   end if;
 
-  for i in 1..coalesce(array_length(v_poll.vote_counts, 1), 0) loop
-    v_total_votes := v_total_votes + v_poll.vote_counts[i];
-    if v_poll.vote_counts[i] > v_max_votes then
-      v_max_votes := v_poll.vote_counts[i];
-      v_winning_idx := i - 1;   -- 0-based to match frontend convention
+  if p_winning_option >= 0 and p_winning_option <= 19 then
+    -- ── Explicit admin override (prediction market use-case) ──────────────
+    -- Validate the supplied option index is within bounds.
+    if p_winning_option >= coalesce(array_length(v_poll.options, 1), 0) then
+      return json_build_object('success', false, 'error', 'invalid_option');
     end if;
-  end loop;
+    v_winning_idx := p_winning_option;
 
-  -- No votes → winning_option = 255
-  if v_total_votes = 0 then
-    v_winning_idx := 255;
+    -- Still need total_votes for the response
+    for i in 1..coalesce(array_length(v_poll.vote_counts, 1), 0) loop
+      v_total_votes := v_total_votes + v_poll.vote_counts[i];
+    end loop;
+  else
+    -- ── Auto-determine winner from vote counts ────────────────────────────
+    for i in 1..coalesce(array_length(v_poll.vote_counts, 1), 0) loop
+      v_total_votes := v_total_votes + v_poll.vote_counts[i];
+      if v_poll.vote_counts[i] > v_max_votes then
+        v_max_votes := v_poll.vote_counts[i];
+        v_winning_idx := i - 1;  -- 0-based to match frontend convention
+      end if;
+    end loop;
+
+    -- No votes → winning_option = 255
+    if v_total_votes = 0 then
+      v_winning_idx := 255;
+    else
+      -- Detect ties: count how many options share the maximum vote count
+      v_tied_count := 0;
+      for i in 1..coalesce(array_length(v_poll.vote_counts, 1), 0) loop
+        if v_poll.vote_counts[i] = v_max_votes then
+          v_tied_count := v_tied_count + 1;
+        end if;
+      end loop;
+      if v_tied_count > 1 then
+        return json_build_object('success', false, 'error', 'tied_vote');
+      end if;
+    end if;
   end if;
 
   update polls
