@@ -54,6 +54,23 @@ export const PollIdInput = z.object({
     p_poll_id: uuidString,
 });
 
+// ── Admin Settle Poll ────────────────────────────────────────────────────
+// p_winning_option: 0–19 sets an explicit winner (used for prediction markets);
+// 255 (default) means "auto-determine from vote counts".
+// Values 20-254 are intentionally rejected — they have no meaning.
+
+export const SettlePollInput = z.object({
+    p_poll_id: uuidString,
+    p_winning_option: z
+        .number()
+        .int()
+        .refine((v) => v === 255 || (v >= 0 && v <= 19), {
+            message: "p_winning_option must be 0–19 (explicit option) or 255 (auto-determine)",
+        })
+        .optional()
+        .default(255),
+});
+
 // ── Comment ─────────────────────────────────────────────────────────────
 
 export const CommentInput = z.object({
