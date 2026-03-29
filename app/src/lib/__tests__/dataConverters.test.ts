@@ -14,7 +14,7 @@ import {
 describe("rowToDemoPoll", () => {
     const baseRow = {
         id: "poll-1",
-        poll_id: 42,
+        poll_id: "42",
         creator: "wallet-abc",
         title: "Will BTC hit $100k?",
         description: "Bitcoin prediction",
@@ -32,7 +32,7 @@ describe("rowToDemoPoll", () => {
         status: 0,
         winning_option: 255,
         total_voters: 15,
-        created_at: 1699000000,
+        created_at: "1699000000",
     };
 
     it("converts all fields correctly", () => {
@@ -58,7 +58,7 @@ describe("rowToDemoPoll", () => {
     it("handles missing optional fields with defaults", () => {
         const minimalRow = {
             id: "poll-2",
-            poll_id: 1,
+            poll_id: "1",
             creator: "wallet-xyz",
             title: "Test",
             options: ["A", "B"],
@@ -75,7 +75,7 @@ describe("rowToDemoPoll", () => {
     });
 
     it("converts vote_counts strings to numbers", () => {
-        const row = { ...baseRow, vote_counts: ["7", "3"] };
+        const row = { ...baseRow, vote_counts: ["7", "3"] } as any;
         const poll = rowToDemoPoll(row);
         expect(poll.voteCounts).toEqual([7, 3]);
     });
@@ -102,6 +102,7 @@ describe("rowToDemoVote", () => {
         const row = {
             poll_id: "poll-2",
             voter: "wallet-xyz",
+            votes_per_option: [],
             total_staked_cents: 0,
             claimed: false,
         };
@@ -122,7 +123,7 @@ describe("rowToUserAccount", () => {
             polls_created: 3,
             total_spent_cents: 250000000,
             total_winnings_cents: 400000000,
-            created_at: 1699000000,
+            created_at: "1699000000",
         };
         const user = rowToUserAccount(row);
         expect(user.wallet).toBe("wallet-abc");
@@ -163,7 +164,7 @@ describe("demoPollToRow (roundtrip)", () => {
     it("roundtrips through rowToDemoPoll → demoPollToRow", () => {
         const originalRow = {
             id: "poll-rt",
-            poll_id: 99,
+            poll_id: "99",
             creator: "wallet-rt",
             title: "Roundtrip test",
             description: "Testing roundtrip",
@@ -181,7 +182,7 @@ describe("demoPollToRow (roundtrip)", () => {
             status: 0,
             winning_option: 255,
             total_voters: 6,
-            created_at: 1699000000,
+            created_at: "1699000000",
         };
 
         const poll = rowToDemoPoll(originalRow);
