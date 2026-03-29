@@ -19,6 +19,7 @@ import {
     getPollPDA,
     getTreasuryPDA,
     getVotePDA,
+    getPlatformConfigPDA,
     ixDiscriminator,
     accountDiscriminator,
 } from "./program.base";
@@ -283,6 +284,24 @@ export function parseVoteAccount(address: PublicKey, data: Buffer): OnChainVote 
 
 // ─── Instruction Builders ──────────────────────────────────────────────────
 
+/** Build InitializePlatform instruction (one-time, admin only) */
+export async function buildInitializePlatformIx(
+    admin: PublicKey
+): Promise<TransactionInstruction> {
+    const disc = await ixDiscriminator("initialize_platform");
+    const [platformConfigPDA] = getPlatformConfigPDA();
+
+    return new TransactionInstruction({
+        programId: PROGRAM_ID,
+        keys: [
+            { pubkey: admin, isSigner: true, isWritable: true },
+            { pubkey: platformConfigPDA, isSigner: false, isWritable: true },
+            { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+        ],
+        data: Buffer.from(disc),
+    });
+}
+
 /** Build InitializeUser instruction */
 export async function buildInitializeUserIx(
     authority: PublicKey
@@ -311,13 +330,13 @@ export async function buildCreatePollIx(
     imageUrl: string,
     options: string[],
     unitPrice: number | bigint,
-    endTime: number | bigint,
-    creatorInvestment: number | bigint
+    endTime: number | bigint
 ): Promise<TransactionInstruction> {
     const disc = await ixDiscriminator("create_poll");
     const [userPDA] = getUserPDA(creator);
     const [pollPDA] = getPollPDA(creator, pollId);
     const [treasuryPDA] = getTreasuryPDA(pollPDA);
+    const [platformConfigPDA] = getPlatformConfigPDA();
 
     const writer = new BorshWriter();
     writer.writeU64(pollId);
@@ -328,7 +347,7 @@ export async function buildCreatePollIx(
     writer.writeVecString(options);
     writer.writeU64(unitPrice);
     writer.writeI64(endTime);
-    writer.writeU64(creatorInvestment);
+    // NOTE: creator_investment removed — program now charges flat POLL_CREATION_FEE (0.5 SOL)
 
     const data = Buffer.concat([Buffer.from(disc), writer.toBuffer()]);
 
@@ -339,6 +358,7 @@ export async function buildCreatePollIx(
             { pubkey: userPDA, isSigner: false, isWritable: true },
             { pubkey: pollPDA, isSigner: false, isWritable: true },
             { pubkey: treasuryPDA, isSigner: false, isWritable: true },
+            { pubkey: platformConfigPDA, isSigner: false, isWritable: false },
             { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
         data,
@@ -358,6 +378,7 @@ export async function buildEditPollIx(
 ): Promise<TransactionInstruction> {
     const disc = await ixDiscriminator("edit_poll");
     const [pollPDA] = getPollPDA(creator, pollId);
+    const [platformConfigPDA] = getPlatformConfigPDA();
 
     const writer = new BorshWriter();
     writer.writeU64(pollId);
@@ -375,6 +396,7 @@ export async function buildEditPollIx(
         keys: [
             { pubkey: creator, isSigner: true, isWritable: true },
             { pubkey: pollPDA, isSigner: false, isWritable: true },
+            { pubkey: platformConfigPDA, isSigner: false, isWritable: false },
         ],
         data,
     });
@@ -394,6 +416,7 @@ export async function buildAdminEditPollIx(
 ): Promise<TransactionInstruction> {
     const disc = await ixDiscriminator("admin_edit_poll");
     const [pollPDA] = getPollPDA(pollCreator, pollId);
+    const [platformConfigPDA] = getPlatformConfigPDA();
 
     const writer = new BorshWriter();
     writer.writeU64(pollId);
@@ -411,6 +434,7 @@ export async function buildAdminEditPollIx(
         keys: [
             { pubkey: admin, isSigner: true, isWritable: true },
             { pubkey: pollPDA, isSigner: false, isWritable: true },
+            { pubkey: platformConfigPDA, isSigner: false, isWritable: false },
         ],
         data,
     });
@@ -455,6 +479,7 @@ export async function buildCastVoteIx(
     const [pollPDA] = getPollPDA(pollCreator, pollId);
     const [treasuryPDA] = getTreasuryPDA(pollPDA);
     const [votePDA] = getVotePDA(pollPDA, voter);
+    const [platformConfigPDA] = getPlatformConfigPDA();
 
     const writer = new BorshWriter();
     writer.writeU64(pollId);
@@ -471,6 +496,7 @@ export async function buildCastVoteIx(
             { pubkey: pollPDA, isSigner: false, isWritable: true },
             { pubkey: treasuryPDA, isSigner: false, isWritable: true },
             { pubkey: votePDA, isSigner: false, isWritable: true },
+            { pubkey: platformConfigPDA, isSigner: false, isWritable: false },
             { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
         data,
@@ -515,6 +541,7 @@ export async function buildAdminSettlePollIx(
     const disc = await ixDiscriminator("admin_settle_poll");
     const [pollPDA] = getPollPDA(pollCreator, pollId);
     const [treasuryPDA] = getTreasuryPDA(pollPDA);
+    const [platformConfigPDA] = getPlatformConfigPDA();
 
     const writer = new BorshWriter();
     writer.writeU64(pollId);
@@ -529,6 +556,7 @@ export async function buildAdminSettlePollIx(
             { pubkey: pollCreator, isSigner: false, isWritable: true },
             { pubkey: pollPDA, isSigner: false, isWritable: true },
             { pubkey: treasuryPDA, isSigner: false, isWritable: true },
+            { pubkey: platformConfigPDA, isSigner: false, isWritable: false },
             { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
         data,

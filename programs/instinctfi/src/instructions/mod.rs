@@ -9,6 +9,8 @@ pub mod sweep_dust;
 pub mod refund_tied_poll;
 pub mod admin_settle_poll;
 pub mod admin_edit_poll;
+pub mod initialize_platform;
+pub mod update_platform_config;
 
 pub use initialize_user::*;
 pub use create_poll::*;
@@ -21,3 +23,5 @@ pub use sweep_dust::*;
 pub use refund_tied_poll::*;
 pub use admin_settle_poll::*;
 pub use admin_edit_poll::*;
+pub use initialize_platform::*;
+pub use update_platform_config::*;

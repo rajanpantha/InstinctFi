@@ -1,7 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
-use crate::state::{PollAccount, PLATFORM_ADMIN};
+use crate::state::{PollAccount, PlatformConfig, CREATOR_POOL_REWARD_BPS, PLATFORM_POOL_FEE_BPS};
 use crate::errors::InstinctFiError;
+use crate::events::PollSettledEvent;
 
 /// Admin-settle a prediction market poll by declaring the real-world outcome.
 ///
@@ -30,7 +31,7 @@ pub fn handler(
     let treasury_bump = ctx.accounts.poll_account.treasury_bump;
     let status = ctx.accounts.poll_account.status;
     let end_time = ctx.accounts.poll_account.end_time;
-    let creator_reward = ctx.accounts.poll_account.creator_reward;
+    let total_pool = ctx.accounts.poll_account.total_pool;
     let options_len = ctx.accounts.poll_account.options.len();
     let vote_counts = ctx.accounts.poll_account.vote_counts.clone();
     let poll_id_val = ctx.accounts.poll_account.poll_id;
@@ -48,41 +49,45 @@ pub fn handler(
     let total_votes: u64 = vote_counts.iter().sum();
 
     if total_votes == 0 {
-        // No votes at all — refund entire treasury to creator
-        let treasury_balance = ctx.accounts.treasury.lamports();
-        if treasury_balance > 0 {
-            system_program::transfer(
-                CpiContext::new_with_signer(
-                    ctx.accounts.system_program.to_account_info(),
-                    system_program::Transfer {
-                        from: ctx.accounts.treasury.to_account_info(),
-                        to: ctx.accounts.creator.to_account_info(),
-                    },
-                    signer_seeds,
-                ),
-                treasury_balance,
-            )?;
-        }
-
+        // No votes — just settle. The 0.5 SOL creation fee stays in treasury
+        // and is swept to the platform admin via sweep_dust.
         let poll = &mut ctx.accounts.poll_account;
         poll.status = PollAccount::STATUS_SETTLED;
         poll.winning_option = winning_option;
 
         msg!(
-            "AdminSettle: Poll {} settled by admin with no votes. Winner: option {}. {} lamports refunded to creator.",
-            poll_id_val, winning_option, treasury_balance
+            "AdminSettle: Poll {} settled with no votes. Winner: option {}. Creation fee stays in treasury.",
+            poll_id_val, winning_option
         );
+
+        emit!(PollSettledEvent {
+            poll_id: poll_id_val,
+            winning_option,
+            total_pool: 0,
+        });
         return Ok(());
     }
 
-    // ── Pay creator reward ──
-    if creator_reward > 0 {
+    // ── Compute fee splits from voter pool ──
+    // 2% of voter pool → creator reward
+    let creator_pool_reward = total_pool * CREATOR_POOL_REWARD_BPS / 10_000;
+    // 3% of voter pool → stays in treasury (platform fee, swept via sweep_dust)
+    let platform_pool_fee = total_pool * PLATFORM_POOL_FEE_BPS / 10_000;
+    // 95% of voter pool → distributable to winners via claim_reward
+    let distributable = total_pool
+        .checked_sub(creator_pool_reward)
+        .ok_or(InstinctFiError::Overflow)?
+        .checked_sub(platform_pool_fee)
+        .ok_or(InstinctFiError::Overflow)?;
+
+    // ── Pay creator reward (2% of voter pool) ──
+    if creator_pool_reward > 0 {
         let rent = Rent::get()?;
         let rent_exempt_min = rent.minimum_balance(0);
         let treasury_available = ctx.accounts.treasury.lamports()
             .saturating_sub(rent_exempt_min);
         require!(
-            treasury_available >= creator_reward,
+            treasury_available >= creator_pool_reward,
             InstinctFiError::TreasuryInsufficient
         );
 
@@ -95,23 +100,35 @@ pub fn handler(
                 },
                 signer_seeds,
             ),
-            creator_reward,
+            creator_pool_reward,
         )?;
     }
 
-    // ── Mark settled with admin-declared winner ──
+    // ── Mark settled — set total_pool to distributable (95%) ──
+    // claim_reward divides user_votes/total_winning_votes × total_pool,
+    // so total_pool must reflect only the winners' share.
     let poll = &mut ctx.accounts.poll_account;
     poll.status = PollAccount::STATUS_SETTLED;
     poll.winning_option = winning_option;
+    poll.total_pool = distributable;
+    poll.creator_reward = creator_pool_reward;  // record actual amount paid
 
     let winning_votes = vote_counts[winning_option as usize];
+
+    emit!(PollSettledEvent {
+        poll_id: poll_id_val,
+        winning_option,
+        total_pool: distributable,
+    });
+
     msg!(
-        "AdminSettle: Poll {} settled by admin. Winner: option {} ({} votes out of {} total). Creator reward: {} lamports",
+        "AdminSettle: Poll {} settled. Winner: option {} ({} votes / {} total). Creator reward: {} lamports. Distributable: {} lamports.",
         poll_id_val,
         winning_option,
         winning_votes,
         total_votes,
-        creator_reward
+        creator_pool_reward,
+        distributable
     );
     Ok(())
 }
@@ -124,9 +141,16 @@ pub struct AdminSettlePoll<'info> {
     /// The platform admin — ONLY this wallet can admin-settle polls.
     #[account(
         mut,
-        constraint = admin.key() == PLATFORM_ADMIN @ InstinctFiError::Unauthorized,
+        constraint = admin.key() == platform_config.admin @ InstinctFiError::Unauthorized,
     )]
     pub admin: Signer<'info>,
+
+    /// Platform config PDA — source of admin authority
+    #[account(
+        seeds = [b"platform_config"],
+        bump = platform_config.bump,
+    )]
+    pub platform_config: Account<'info, PlatformConfig>,
 
     /// CHECK: Poll creator — receives creator reward. Validated by constraint.
     #[account(

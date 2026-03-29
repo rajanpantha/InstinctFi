@@ -6,6 +6,10 @@ import { isAdminWallet } from "@/lib/constants";
 import { supabase, isSupabaseConfigured } from "@/lib/supabase";
 import toast from "react-hot-toast";
 import AdminEditModal from "./AdminEditModal";
+import { PublicKey } from "@solana/web3.js";
+import { buildInitializePlatformIx, sendTransaction, confirmTransactionBg, getPlatformConfigPDA } from "@/lib/program";
+import { connection } from "@/lib/program.base";
+import { useWallet } from "@solana/wallet-adapter-react";
 
 type TabFilter = "ended" | "active" | "settled" | "all";
 
@@ -32,6 +36,39 @@ export default function AdminPage() {
   const [editingPoll, setEditingPoll] = useState<DemoPoll | null>(null);
   const [proofs, setProofs] = useState<ResolutionProofs>(loadProofs);
   const [confirmModal, setConfirmModal] = useState<{ title: string; message: string; onConfirm: () => void } | null>(null);
+  const { signTransaction } = useWallet();
+  const [platformInitialized, setPlatformInitialized] = useState<boolean | null>(null);
+  const [initializingPlatform, setInitializingPlatform] = useState(false);
+
+  // Check if PlatformConfig PDA exists on-chain
+  useEffect(() => {
+    (async () => {
+      try {
+        const [pda] = getPlatformConfigPDA();
+        const info = await connection.getAccountInfo(pda);
+        setPlatformInitialized(info !== null);
+      } catch {
+        setPlatformInitialized(null);
+      }
+    })();
+  }, []);
+
+  const handleInitializePlatform = async () => {
+    if (!walletAddress || !signTransaction) return;
+    setInitializingPlatform(true);
+    try {
+      const pubkey = new PublicKey(walletAddress);
+      const ix = await buildInitializePlatformIx(pubkey);
+      const sig = await sendTransaction([ix], pubkey, signTransaction);
+      toast.success("Platform initialized! Tx: " + sig.slice(0, 12) + "...");
+      confirmTransactionBg(sig);
+      setPlatformInitialized(true);
+    } catch (e: any) {
+      toast.error("Init failed: " + (e?.message || e));
+    } finally {
+      setInitializingPlatform(false);
+    }
+  };
 
   // Load proofs from Supabase on mount
   useEffect(() => {
@@ -191,6 +228,27 @@ export default function AdminPage() {
       </div>
 
       {/* Stats cards */}
+
+      {/* Platform Initialization Banner */}
+      {platformInitialized === false && (
+        <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl flex items-center justify-between">
+          <div>
+            <p className="text-yellow-400 font-semibold">⚠ Platform Not Initialized</p>
+            <p className="text-sm text-gray-400 mt-1">
+              The PlatformConfig PDA must be initialized once before polls and voting work.
+            </p>
+          </div>
+          <button
+            onClick={handleInitializePlatform}
+            disabled={initializingPlatform}
+            className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 disabled:opacity-50 text-black font-semibold rounded-lg transition-colors"
+          >
+            {initializingPlatform ? "Initializing..." : "Initialize Platform"}
+          </button>
+        </div>
+      )}
+
+      {/* Stats cards (original) */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         {[
           { label: "Total Polls", value: polls.length, color: "text-white" },

@@ -3,6 +3,7 @@ use anchor_lang::prelude::*;
 pub mod state;
 pub mod errors;
 pub mod instructions;
+pub mod events;
 
 use instructions::*;
 
@@ -18,7 +19,7 @@ pub mod instinctfi {
         instructions::initialize_user::handler(ctx)
     }
 
-    /// Create a prediction poll with real SOL investment.
+    /// Create a prediction poll with a flat 0.5 SOL creation fee.
     pub fn create_poll(
         ctx: Context<CreatePoll>,
         poll_id: u64,
@@ -29,11 +30,10 @@ pub mod instinctfi {
         options: Vec<String>,
         unit_price: u64,
         end_time: i64,
-        creator_investment: u64,
     ) -> Result<()> {
         instructions::create_poll::handler(
             ctx, poll_id, title, description, category, image_url,
-            options, unit_price, end_time, creator_investment,
+            options, unit_price, end_time,
         )
     }
 
@@ -113,5 +113,19 @@ pub mod instinctfi {
         instructions::admin_edit_poll::handler(
             ctx, poll_id, title, description, category, image_url, options, end_time,
         )
+    }
+
+    /// Initialize the platform config PDA. Must be called once after deployment.
+    pub fn initialize_platform(ctx: Context<InitializePlatform>) -> Result<()> {
+        instructions::initialize_platform::handler(ctx)
+    }
+
+    /// Update platform config (pause toggle, admin transfer). Admin only.
+    pub fn update_platform_config(
+        ctx: Context<UpdatePlatformConfig>,
+        paused: bool,
+        new_admin: Pubkey,
+    ) -> Result<()> {
+        instructions::update_platform_config::handler(ctx, paused, new_admin)
     }
 }

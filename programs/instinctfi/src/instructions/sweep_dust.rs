@@ -1,6 +1,6 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
-use crate::state::{PollAccount, PLATFORM_ADMIN};
+use crate::state::{PollAccount, PlatformConfig};
 use crate::errors::InstinctFiError;
 
 /// Sweep residual dust (platform fees + rounding residual) from a settled
@@ -20,7 +20,10 @@ pub fn handler(ctx: Context<SweepDust>, _poll_id: u64) -> Result<()> {
     let end_time = ctx.accounts.poll_account.end_time;
 
     // ── Guards ──
-    require!(status == PollAccount::STATUS_SETTLED, InstinctFiError::NotSettled);
+    require!(
+        status == PollAccount::STATUS_SETTLED || status == PollAccount::STATUS_VOIDED,
+        InstinctFiError::NotSettled
+    );
 
     // BUG-01 FIX: Enforce a 7-day grace period after poll end_time
     // so all winners have time to claim before dust is swept.
@@ -41,7 +44,7 @@ pub fn handler(ctx: Context<SweepDust>, _poll_id: u64) -> Result<()> {
         return Ok(());
     }
 
-    // Transfer dust to platform admin
+    // Transfer dust to platform admin via CPI
     let seeds: &[&[u8]] = &[b"treasury", poll_key.as_ref(), &[treasury_bump]];
     let signer_seeds = &[seeds];
 
@@ -56,6 +59,16 @@ pub fn handler(ctx: Context<SweepDust>, _poll_id: u64) -> Result<()> {
         ),
         available,
     )?;
+
+    // Close treasury PDA entirely — drain rent-exempt lamports to recover ~0.00089 SOL
+    let treasury_info = ctx.accounts.treasury.to_account_info();
+    let admin_info = ctx.accounts.platform_admin.to_account_info();
+    let remaining = treasury_info.lamports();
+    **treasury_info.try_borrow_mut_lamports()? = 0;
+    **admin_info.try_borrow_mut_lamports()? = admin_info
+        .lamports()
+        .checked_add(remaining)
+        .ok_or(InstinctFiError::Overflow)?;
 
     msg!(
         "SweepDust: poll={} swept {} lamports to admin {}",
@@ -76,13 +89,19 @@ pub struct SweepDust<'info> {
     pub sweeper: Signer<'info>,
 
     /// CHECK: Platform admin wallet — receives dust.
-    /// CRIT-04 FIX: Constrained to the declared PLATFORM_ADMIN constant
-    /// instead of poll_account.creator to prevent creators from stealing platform fees.
+    /// Constrained to match the admin stored in PlatformConfig.
     #[account(
         mut,
-        constraint = platform_admin.key() == PLATFORM_ADMIN @ InstinctFiError::Unauthorized,
+        constraint = platform_admin.key() == platform_config.admin @ InstinctFiError::Unauthorized,
     )]
     pub platform_admin: UncheckedAccount<'info>,
+
+    /// Platform config PDA — source of admin authority
+    #[account(
+        seeds = [b"platform_config"],
+        bump = platform_config.bump,
+    )]
+    pub platform_config: Account<'info, PlatformConfig>,
 
     /// The settled poll
     #[account(

@@ -1,7 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
-use crate::state::{PollAccount, UserAccount};
+use crate::state::{PollAccount, UserAccount, PlatformConfig, POLL_CREATION_FEE, MIN_UNIT_PRICE, MIN_POLL_DURATION};
 use crate::errors::InstinctFiError;
+use crate::events::PollCreatedEvent;
 
 /// Creates a new prediction poll with a real SOL investment.
 ///
@@ -28,8 +29,10 @@ pub fn handler(
     options: Vec<String>,
     unit_price: u64,
     end_time: i64,
-    creator_investment: u64,
 ) -> Result<()> {
+    // ── Platform pause check ──
+    require!(!ctx.accounts.platform_config.paused, InstinctFiError::PlatformPaused);
+
     // ── Validate inputs ──
     require!(title.len() <= 64, InstinctFiError::TitleTooLong);
     require!(description.len() <= 256, InstinctFiError::DescriptionTooLong);
@@ -38,23 +41,19 @@ pub fn handler(
     require!(options.len() >= 2 && options.len() <= 6, InstinctFiError::InvalidOptionCount);
     for opt in &options {
         require!(opt.len() <= 32, InstinctFiError::OptionLabelTooLong);
+        require!(!opt.trim().is_empty(), InstinctFiError::EmptyOptionLabel);
     }
     require!(unit_price > 0, InstinctFiError::InvalidUnitPrice);
+    require!(unit_price >= MIN_UNIT_PRICE, InstinctFiError::UnitPriceBelowMinimum);
 
     let clock = Clock::get()?;
     require!(end_time > clock.unix_timestamp, InstinctFiError::EndTimeInPast);
-    require!(creator_investment >= unit_price, InstinctFiError::InvestmentTooLow);
+    require!(
+        end_time - clock.unix_timestamp >= MIN_POLL_DURATION,
+        InstinctFiError::PollDurationTooShort
+    );
 
-    // ── Fee math (all in lamports) ──
-    let platform_fee = std::cmp::max(creator_investment / 100, 1);
-    let creator_reward = std::cmp::max(creator_investment / 100, 1);
-    let pool_seed = creator_investment
-        .checked_sub(platform_fee)
-        .ok_or(InstinctFiError::Overflow)?
-        .checked_sub(creator_reward)
-        .ok_or(InstinctFiError::Overflow)?;
-
-    // ── Transfer real SOL from creator → treasury PDA ──
+    // ── Transfer flat 0.5 SOL creation fee from creator → treasury PDA ──
     system_program::transfer(
         CpiContext::new(
             ctx.accounts.system_program.to_account_info(),
@@ -63,7 +62,7 @@ pub fn handler(
                 to: ctx.accounts.treasury.to_account_info(),
             },
         ),
-        creator_investment,
+        POLL_CREATION_FEE,
     )?;
 
     // ── Initialize poll account ──
@@ -80,10 +79,10 @@ pub fn handler(
     poll.vote_counts = vec![0u64; num_options];
     poll.unit_price = unit_price;
     poll.end_time = end_time;
-    poll.total_pool = pool_seed;
-    poll.creator_investment = creator_investment;
-    poll.platform_fee = platform_fee;
-    poll.creator_reward = creator_reward;
+    poll.total_pool = 0;  // pool starts at 0 — voters fill it entirely
+    poll.creator_investment = POLL_CREATION_FEE;
+    poll.platform_fee = POLL_CREATION_FEE;  // full creation fee goes to platform
+    poll.creator_reward = 0;  // computed at settlement (2% of voter pool)
     poll.status = PollAccount::STATUS_ACTIVE;
     poll.winning_option = 255;
     poll.treasury_bump = ctx.bumps.treasury;
@@ -98,12 +97,20 @@ pub fn handler(
         .ok_or(InstinctFiError::Overflow)?;
 
     msg!(
-        "Poll {} created with {} options, pool={} lamports, treasury={}",
+        "Poll {} created with {} options, treasury={}",
         poll.poll_id,
         num_options,
-        pool_seed,
         ctx.accounts.treasury.key()
     );
+
+    emit!(PollCreatedEvent {
+        poll_id: poll.poll_id,
+        creator: ctx.accounts.creator.key(),
+        end_time: poll.end_time,
+        total_pool: 0,
+        num_options: num_options as u8,
+    });
+
     Ok(())
 }
 
@@ -143,6 +150,13 @@ pub struct CreatePoll<'info> {
         bump,
     )]
     pub treasury: UncheckedAccount<'info>,
+
+    /// Platform config — checked for pause state
+    #[account(
+        seeds = [b"platform_config"],
+        bump = platform_config.bump,
+    )]
+    pub platform_config: Account<'info, PlatformConfig>,
 
     pub system_program: Program<'info, System>,
 }

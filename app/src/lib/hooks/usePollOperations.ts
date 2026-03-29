@@ -233,11 +233,11 @@ export function usePollOperations({
 
                 // ── Pre-flight: check wallet balance before building tx ──
                 const walletBal = await getWalletBalance(pubkey);
-                // Need enough for creator investment + tx fees (~0.01 SOL buffer)
-                const minRequired = poll.creatorInvestmentLamports + 10_000_000; // investment + ~0.01 SOL for fees/rent
+                // Need enough for 0.5 SOL flat creation fee + tx fees/rent (~0.01 SOL buffer)
+                const minRequired = 500_000_000 + 10_000_000; // 0.51 SOL
                 if (walletBal < minRequired) {
                     toast.error(
-                        `Insufficient SOL. You need at least ${((minRequired) / 1e9).toFixed(4)} SOL but have ${(walletBal / 1e9).toFixed(4)} SOL.`,
+                        `Insufficient SOL. You need at least 0.51 SOL but have ${(walletBal / 1e9).toFixed(4)} SOL.`,
                         { id: "create-poll" }
                     );
                     return null;
@@ -248,8 +248,7 @@ export function usePollOperations({
                     fetchUserAccount(pubkey),
                     buildCreatePollIx(
                         pubkey, pollId, poll.title, poll.description, poll.category,
-                        poll.imageUrl, poll.options, poll.unitPriceLamports, poll.endTime,
-                        poll.creatorInvestmentLamports
+                        poll.imageUrl, poll.options, poll.unitPriceLamports, poll.endTime
                     ),
                 ]);
                 const instructions = [];
@@ -285,17 +284,16 @@ export function usePollOperations({
                 if (lastTxError) throw lastTxError;
 
                 const [pollPDA] = getPollPDA(pubkey, pollId);
-                const platformFee = Math.max(Math.floor(poll.creatorInvestmentLamports / 100), 1);
-                const creatorReward = Math.max(Math.floor(poll.creatorInvestmentLamports / 100), 1);
-                const poolSeed = poll.creatorInvestmentLamports - platformFee - creatorReward;
+                const CREATION_FEE = 500_000_000; // 0.5 SOL flat fee
 
                 const newPoll: DemoPoll = {
                     ...poll,
                     id: pollPDA.toString(),
                     pollId,
-                    totalPoolLamports: poolSeed,
-                    platformFeeLamports: platformFee,
-                    creatorRewardLamports: creatorReward,
+                    totalPoolLamports: 0,          // pool starts at 0 — voters fill it
+                    platformFeeLamports: CREATION_FEE,
+                    creatorRewardLamports: 0,      // paid at settlement (2% of voter pool)
+                    creatorInvestmentLamports: CREATION_FEE,
                     voteCounts: new Array(poll.options.length).fill(0),
                     status: PollStatus.Active,
                     winningOption: WINNING_OPTION_UNSET,
@@ -368,9 +366,9 @@ export function usePollOperations({
                     if (u.wallet !== walletAddress) return u;
                     return {
                         ...u,
-                        balance: Math.max(0, u.balance - poll.creatorInvestmentLamports),
+                        balance: Math.max(0, u.balance - 500_000_000),
                         pollsCreated: u.pollsCreated + 1,
-                        totalSpentLamports: u.totalSpentLamports + poll.creatorInvestmentLamports,
+                        totalSpentLamports: u.totalSpentLamports + 500_000_000,
                     };
                 }));
                 markMutation();

@@ -66,6 +66,14 @@ export function getVotePDA(pollAccount: PublicKey, voter: PublicKey): [PublicKey
     );
 }
 
+/** seeds = ["platform_config"] */
+export function getPlatformConfigPDA(): [PublicKey, number] {
+    return PublicKey.findProgramAddressSync(
+        [Buffer.from("platform_config")],
+        PROGRAM_ID
+    );
+}
+
 // ─── SOL Formatting ────────────────────────────────────────────────────────
 
 export function lamportsToSol(lamports: number): number {

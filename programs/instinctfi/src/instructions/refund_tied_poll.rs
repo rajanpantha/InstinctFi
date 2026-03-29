@@ -3,18 +3,16 @@ use anchor_lang::system_program;
 use crate::state::{PollAccount, VoteAccount};
 use crate::errors::InstinctFiError;
 
-/// CRIT-03 FIX: Refund a voter when a poll ended in a tie.
+/// Refund a voter when a poll is in a refundable state.
 ///
-/// When `settle_poll` rejects settlement due to a `TiedVote` error, funds
-/// would otherwise be permanently locked in the treasury. This instruction
-/// allows each voter to individually reclaim their stake.
+/// A poll is refundable when:
+/// 1. It was VOIDED (admin didn't settle within grace period, `settle_poll` was called)
+/// 2. It ended in a TIE (still ACTIVE, ended, two+ options share the max vote count)
 ///
 /// Safety invariants:
-/// - Poll must be ACTIVE (settling was rejected because of a tie)
-/// - Poll end_time must have passed
-/// - A genuine tie must exist (two or more options share the highest vote count)
 /// - Voter must not have already claimed (prevents double-refund)
 /// - Refund amount = voter's `total_staked` from their VoteAccount
+/// - Vote account is closed after refund (rent returned to voter)
 pub fn handler(ctx: Context<RefundTiedPoll>, _poll_id: u64) -> Result<()> {
     let clock = Clock::get()?;
 
@@ -26,18 +24,23 @@ pub fn handler(ctx: Context<RefundTiedPoll>, _poll_id: u64) -> Result<()> {
     let vote_counts = ctx.accounts.poll_account.vote_counts.clone();
 
     // ── Guards ──
-    // Poll must still be active (settle_poll was blocked by TiedVote)
-    require!(status == PollAccount::STATUS_ACTIVE, InstinctFiError::AlreadySettled);
-    // Poll must have ended
-    require!(clock.unix_timestamp >= end_time, InstinctFiError::PollNotEnded);
-    // Voter must not have claimed yet
     require!(!ctx.accounts.vote_account.claimed, InstinctFiError::AlreadyClaimed);
 
-    // ── Verify tie condition ──
-    let max_votes = vote_counts.iter().copied().max().unwrap_or(0);
-    require!(max_votes > 0, InstinctFiError::NoVotes);
-    let tied_count = vote_counts.iter().filter(|&&c| c == max_votes).count();
-    require!(tied_count > 1, InstinctFiError::NotATie);
+    // Poll must be in a refundable state:
+    // Either VOIDED (admin didn't settle) or ACTIVE + ended + tied
+    if status == PollAccount::STATUS_VOIDED {
+        // Voided poll — always refundable, no further checks needed
+    } else if status == PollAccount::STATUS_ACTIVE {
+        // Active poll — must be ended and must have a genuine tie
+        require!(clock.unix_timestamp >= end_time, InstinctFiError::PollNotEnded);
+        let max_votes = vote_counts.iter().copied().max().unwrap_or(0);
+        require!(max_votes > 0, InstinctFiError::NoVotes);
+        let tied_count = vote_counts.iter().filter(|&&c| c == max_votes).count();
+        require!(tied_count > 1, InstinctFiError::NotATie);
+    } else {
+        // Settled polls cannot be refunded
+        return Err(InstinctFiError::AlreadySettled.into());
+    }
 
     // ── Calculate refund ──
     let refund_amount = ctx.accounts.vote_account.total_staked;
@@ -65,11 +68,11 @@ pub fn handler(ctx: Context<RefundTiedPoll>, _poll_id: u64) -> Result<()> {
         refund_amount,
     )?;
 
-    // Mark as claimed to prevent double-refund
+    // Mark as claimed to prevent double-refund (account closed after instruction)
     ctx.accounts.vote_account.claimed = true;
 
     msg!(
-        "RefundTiedPoll: voter {} refunded {} lamports from poll {}",
+        "Refund: voter {} refunded {} lamports from poll {}",
         ctx.accounts.voter.key(),
         refund_amount,
         _poll_id
@@ -100,6 +103,7 @@ pub struct RefundTiedPoll<'info> {
         bump = vote_account.bump,
         constraint = vote_account.voter == voter.key() @ InstinctFiError::Unauthorized,
         constraint = vote_account.poll == poll_account.key() @ InstinctFiError::Unauthorized,
+        close = voter,
     )]
     pub vote_account: Account<'info, VoteAccount>,
 

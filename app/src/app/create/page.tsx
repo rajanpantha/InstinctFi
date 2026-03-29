@@ -149,17 +149,13 @@ export default function CreatePollPage() {
     if (!cleanTitle) return toast.error("Title is required");
     if (cleanOptions.some((o) => !o)) return toast.error("All options must have labels");
     if (parseFloat(unitPrice) <= 0) return toast.error("Invalid unit price");
-    if (parseFloat(investment) <= 0) return toast.error("Invalid investment");
 
     const unitPriceLamports = Math.floor(parseFloat(unitPrice) * SOL_UNIT);
-    const investmentCents = Math.floor(parseFloat(investment) * SOL_UNIT);
     const endTime = Math.floor(Date.now() / 1000) + parseInt(durationHours) * 3600;
+    const CREATION_FEE = 500_000_000; // 0.5 SOL flat fee
 
-    if (userAccount && investmentCents > userAccount.balance) {
-      return toast.error("Insufficient SOL balance");
-    }
-    if (investmentCents < unitPriceLamports) {
-      return toast.error("Investment must be >= unit price");
+    if (userAccount && CREATION_FEE > userAccount.balance) {
+      return toast.error("Insufficient SOL balance (need 0.5 SOL creation fee)");
     }
 
     setSubmitting(true);
@@ -213,7 +209,7 @@ export default function CreatePollPage() {
         unitPriceLamports,
         endTime,
         totalPoolLamports: 0,
-        creatorInvestmentLamports: investmentCents,
+        creatorInvestmentLamports: CREATION_FEE,
         platformFeeLamports: 0,
         creatorRewardLamports: 0,
         status: 0,
@@ -235,10 +231,7 @@ export default function CreatePollPage() {
   };
 
   // ── Preview math ──
-  const investCents = Math.floor(parseFloat(investment || "0") * SOL_UNIT);
-  const platformFee = Math.max(Math.floor(investCents / 100), 1);
-  const creatorReward = Math.max(Math.floor(investCents / 100), 1);
-  const poolSeed = Math.max(investCents - platformFee - creatorReward, 0);
+  const CREATION_FEE_PREVIEW = 500_000_000; // 0.5 SOL
 
   const TEMPLATES = [
     {
@@ -496,17 +489,12 @@ export default function CreatePollPage() {
           </div>
         </div>
 
-        {/* Investment */}
+        {/* Creation Fee */}
         <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">{t("creatorInvestment")}</label>
-          <input
-            type="number"
-            value={investment}
-            onChange={(e) => setInvestment(e.target.value)}
-            step="0.1"
-            min="0.5"
-            className="w-full px-4 py-3 bg-surface-100 border border-border rounded-xl focus:border-brand-500 outline-none transition-colors"
-          />
+          <label className="block text-sm font-medium text-gray-300 mb-2">Creation Fee</label>
+          <div className="w-full px-4 py-3 bg-surface-100 border border-border rounded-xl text-gray-400 text-sm">
+            0.5 SOL (flat platform fee — non-refundable once the poll has votes)
+          </div>
         </div>
 
         {/* Preview */}
@@ -516,14 +504,16 @@ export default function CreatePollPage() {
             {t("tokenomicsPreview")}
           </h3>
           <div className="grid grid-cols-2 gap-2 sm:gap-3 text-sm">
-            <div className="text-gray-400">{t("poolSeed")}</div>
-            <div className="text-right font-mono">{formatDollars(poolSeed)}</div>
-            <div className="text-gray-400">{t("platformFee")}</div>
-            <div className="text-right font-mono">{formatDollars(platformFee)}</div>
-            <div className="text-gray-400">{t("creatorReward")}</div>
-            <div className="text-right font-mono">{formatDollars(creatorReward)}</div>
-            <div className="text-gray-400 font-semibold border-t border-border pt-2">{t("totalInvestment")}</div>
-            <div className="text-right font-mono font-semibold border-t border-border pt-2">{formatDollars(investCents)}</div>
+            <div className="text-gray-400">Creation fee (platform)</div>
+            <div className="text-right font-mono">{formatDollars(CREATION_FEE_PREVIEW)}</div>
+            <div className="text-gray-400">Voter pool seed</div>
+            <div className="text-right font-mono text-gray-500">0 SOL (voters fill it)</div>
+            <div className="text-gray-400">On settlement: creator gets</div>
+            <div className="text-right font-mono text-green-400">2% of voter pool</div>
+            <div className="text-gray-400">On settlement: winners share</div>
+            <div className="text-right font-mono text-brand-400">95% of voter pool</div>
+            <div className="text-gray-400 font-semibold border-t border-border pt-2">Total you pay now</div>
+            <div className="text-right font-mono font-semibold border-t border-border pt-2">{formatDollars(CREATION_FEE_PREVIEW)}</div>
           </div>
         </div>
 

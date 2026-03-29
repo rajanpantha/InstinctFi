@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use crate::state::PollAccount;
+use crate::state::{PollAccount, PlatformConfig};
 use crate::errors::InstinctFiError;
 
 /// Edits an existing poll. Only the creator may call this,
@@ -19,6 +19,9 @@ pub fn handler(
 ) -> Result<()> {
     let poll = &mut ctx.accounts.poll_account;
     let clock = Clock::get()?;
+
+    // ── Platform pause check ──
+    require!(!ctx.accounts.platform_config.paused, InstinctFiError::PlatformPaused);
 
     // ── Permission & safety checks ──
     require!(
@@ -71,4 +74,11 @@ pub struct EditPoll<'info> {
         bump = poll_account.bump,
     )]
     pub poll_account: Account<'info, PollAccount>,
+
+    /// Platform config — checked for pause state
+    #[account(
+        seeds = [b"platform_config"],
+        bump = platform_config.bump,
+    )]
+    pub platform_config: Account<'info, PlatformConfig>,
 }

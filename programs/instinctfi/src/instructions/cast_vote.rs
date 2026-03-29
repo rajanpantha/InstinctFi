@@ -1,7 +1,8 @@
 use anchor_lang::prelude::*;
 use anchor_lang::system_program;
-use crate::state::{PollAccount, VoteAccount, UserAccount};
+use crate::state::{PollAccount, VoteAccount, UserAccount, PlatformConfig, MAX_COINS_PER_VOTE};
 use crate::errors::InstinctFiError;
+use crate::events::VoteCastEvent;
 
 /// Buy `num_coins` option-coins for `option_index` on a poll.
 /// Cost = num_coins × unit_price (in lamports).
@@ -13,6 +14,9 @@ pub fn handler(
     num_coins: u64,
 ) -> Result<()> {
     let clock = Clock::get()?;
+
+    // ── Platform pause check ──
+    require!(!ctx.accounts.platform_config.paused, InstinctFiError::PlatformPaused);
 
     // Read poll data immutably first
     let poll_status = ctx.accounts.poll_account.status;
@@ -26,6 +30,7 @@ pub fn handler(
     require!(clock.unix_timestamp < poll_end_time, InstinctFiError::PollAlreadyEnded);
     require!((option_index as usize) < poll_options_len, InstinctFiError::InvalidOption);
     require!(num_coins > 0, InstinctFiError::ZeroCoins);
+    require!(num_coins <= MAX_COINS_PER_VOTE, InstinctFiError::TooManyCoins);
     require!(
         ctx.accounts.voter.key() != poll_creator,
         InstinctFiError::CreatorCannotVote
@@ -97,6 +102,15 @@ pub fn handler(
         ctx.accounts.poll_account.poll_id,
         cost
     );
+
+    emit!(VoteCastEvent {
+        poll_id: ctx.accounts.poll_account.poll_id,
+        voter: ctx.accounts.voter.key(),
+        option_index,
+        num_coins,
+        cost,
+    });
+
     Ok(())
 }
 
@@ -142,6 +156,13 @@ pub struct CastVote<'info> {
         bump,
     )]
     pub vote_account: Account<'info, VoteAccount>,
+
+    /// Platform config — checked for pause state
+    #[account(
+        seeds = [b"platform_config"],
+        bump = platform_config.bump,
+    )]
+    pub platform_config: Account<'info, PlatformConfig>,
 
     pub system_program: Program<'info, System>,
 }

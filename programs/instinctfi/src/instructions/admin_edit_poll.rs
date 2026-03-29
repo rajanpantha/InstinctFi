@@ -1,5 +1,5 @@
 use anchor_lang::prelude::*;
-use crate::state::{PollAccount, PLATFORM_ADMIN};
+use crate::state::{PollAccount, PlatformConfig};
 use crate::errors::InstinctFiError;
 
 /// Admin-edit a poll. Only PLATFORM_ADMIN can call this.
@@ -66,9 +66,16 @@ pub struct AdminEditPoll<'info> {
     /// The platform admin — ONLY this wallet can admin-edit polls.
     #[account(
         mut,
-        constraint = admin.key() == PLATFORM_ADMIN @ InstinctFiError::Unauthorized,
+        constraint = admin.key() == platform_config.admin @ InstinctFiError::Unauthorized,
     )]
     pub admin: Signer<'info>,
+
+    /// Platform config PDA — source of admin authority
+    #[account(
+        seeds = [b"platform_config"],
+        bump = platform_config.bump,
+    )]
+    pub platform_config: Account<'info, PlatformConfig>,
 
     /// The poll to edit. PDA is seeded by the original creator, not the admin.
     #[account(

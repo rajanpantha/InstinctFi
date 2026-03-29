@@ -64,4 +64,16 @@ pub enum InstinctFiError {
     NotATie,
     #[msg("Admin grace period active — only platform admin can settle within 7 days of poll end")]
     AdminGracePeriodActive,
+    #[msg("Too many coins in a single vote (max 1000)")]
+    TooManyCoins,
+    #[msg("Creator investment below minimum (0.01 SOL)")]
+    InvestmentBelowMinimum,
+    #[msg("Unit price below minimum (0.001 SOL)")]
+    UnitPriceBelowMinimum,
+    #[msg("Poll duration too short (minimum 1 hour)")]
+    PollDurationTooShort,
+    #[msg("Platform is paused — no new markets or votes")]
+    PlatformPaused,
+    #[msg("Option label cannot be empty")]
+    EmptyOptionLabel,
 }

@@ -2,6 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::system_program;
 use crate::state::{PollAccount, VoteAccount, UserAccount};
 use crate::errors::InstinctFiError;
+use crate::events::RewardClaimedEvent;
 
 /// Claim winnings for a settled poll.
 ///
@@ -82,6 +83,12 @@ pub fn handler(ctx: Context<ClaimReward>, _poll_id: u64) -> Result<()> {
         .checked_add(1)
         .ok_or(InstinctFiError::Overflow)?;
 
+    emit!(RewardClaimedEvent {
+        poll_id: poll_id_val,
+        claimer: ctx.accounts.claimer.key(),
+        reward,
+    });
+
     msg!(
         "Claim: poll={} user={} votes={}/{} reward={} lamports",
         poll_id_val,
@@ -125,11 +132,12 @@ pub struct ClaimReward<'info> {
     )]
     pub treasury: UncheckedAccount<'info>,
 
-    /// Vote record for this user on this poll
+    /// Vote record for this user on this poll (closed after claim)
     #[account(
         mut,
         seeds = [b"vote", poll_account.key().as_ref(), claimer.key().as_ref()],
         bump = vote_account.bump,
+        close = claimer,
     )]
     pub vote_account: Account<'info, VoteAccount>,
 

@@ -1,15 +1,36 @@
 use anchor_lang::prelude::*;
 
-/// CRIT-04 FIX: Platform admin pubkey for receiving sweep_dust fees.
+/// Initial admin pubkey — used only in `initialize_platform` to prevent
+/// front-running of platform setup. After init, admin is stored in
+/// PlatformConfig PDA and can be rotated via `update_platform_config`.
 /// Wallet: 62PFLSvnG4Zp8jYS9AFymETvV5e8xBA2JBW2UhjqyNmS
-pub const PLATFORM_ADMIN: Pubkey = Pubkey::new_from_array([
+pub const INITIAL_ADMIN: Pubkey = Pubkey::new_from_array([
     74,165,43,158,91,189,190,113,41,134,75,0,110,157,151,8,
     192,58,184,92,42,146,252,113,22,211,49,209,118,16,62,133,
 ]);
 
-/// Grace period (7 days) during which only PLATFORM_ADMIN can settle a poll.
-/// After this window, anyone can fall back to vote-count based settlement.
+/// Grace period (7 days) during which only the platform admin can settle.
+/// After this window, anyone can void the poll via `settle_poll`.
 pub const ADMIN_SETTLE_GRACE_SECONDS: i64 = 7 * 24 * 60 * 60;
+
+/// Maximum option-coins a single user can buy per `cast_vote` call.
+pub const MAX_COINS_PER_VOTE: u64 = 1_000;
+
+/// Flat creation fee paid by poll creator (0.5 SOL).
+/// Goes into treasury PDA. Non-refundable once the poll has votes.
+pub const POLL_CREATION_FEE: u64 = 500_000_000;
+
+/// Minimum unit price per option-coin (0.001 SOL).
+pub const MIN_UNIT_PRICE: u64 = 1_000_000;
+
+/// Minimum poll duration in seconds (1 hour).
+pub const MIN_POLL_DURATION: i64 = 3_600;
+
+/// Creator pool reward: 2% of total voter pool paid to creator on settlement.
+pub const CREATOR_POOL_REWARD_BPS: u64 = 200;
+
+/// Platform settlement fee: 3% of voter pool kept in treasury on settlement.
+pub const PLATFORM_POOL_FEE_BPS: u64 = 300;
 
 // ─── User Account ───────────────────────────────────────────────────────────
 // PDA seeds: ["user", authority.key]
@@ -71,9 +92,9 @@ pub struct PollAccount {
     pub total_pool: u64,
     /// Creator's initial investment in lamports
     pub creator_investment: u64,
-    /// Platform fee in lamports (1%, stays in treasury)
+    /// Platform creation fee in lamports (0.5 SOL flat fee, stays in treasury)
     pub platform_fee: u64,
-    /// Creator reward in lamports (1%, sent to creator on settlement)
+    /// Creator pool reward in lamports (2% of voter pool, paid at settlement)
     pub creator_reward: u64,
     /// 0 = Active, 1 = Settled
     pub status: u8,
@@ -92,9 +113,14 @@ pub struct PollAccount {
 impl PollAccount {
     pub const STATUS_ACTIVE: u8 = 0;
     pub const STATUS_SETTLED: u8 = 1;
+    pub const STATUS_VOIDED: u8 = 2;
 
     pub fn is_active(&self) -> bool {
         self.status == Self::STATUS_ACTIVE
+    }
+
+    pub fn is_voided(&self) -> bool {
+        self.status == Self::STATUS_VOIDED
     }
 
     pub fn is_ended(&self, clock: &Clock) -> bool {
@@ -119,6 +145,21 @@ pub struct VoteAccount {
     pub total_staked: u64,
     /// Whether rewards have been claimed
     pub claimed: bool,
+    /// PDA bump
+    pub bump: u8,
+}
+
+// ─── Platform Config ────────────────────────────────────────────────────────
+// PDA seeds: ["platform_config"]
+// Stores platform-wide configuration: admin authority and pause state.
+// Replaces the hardcoded PLATFORM_ADMIN constant for admin checks.
+#[account]
+#[derive(InitSpace)]
+pub struct PlatformConfig {
+    /// Current platform admin public key
+    pub admin: Pubkey,
+    /// When true, blocks new polls and votes
+    pub paused: bool,
     /// PDA bump
     pub bump: u8,
 }
