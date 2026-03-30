@@ -35,17 +35,6 @@ jobs:
           key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-${{ runner.os }}-
 
-      - name: Install Solana CLI
-        run: |
-          sh -c "$(curl -sSfL https://release.anza.xyz/v${{ env.SOLANA_VERSION }}/install)"
-          echo "$HOME/.local/share/solana/install/active_release/bin" >> $GITHUB_PATH
-
-      - name: Install Anchor CLI
-        run: cargo install --git https://github.com/coral-xyz/anchor --tag v${{ env.ANCHOR_VERSION }} anchor-cli --locked --force
-
-      - name: Generate keypair
-        run: solana-keygen new --no-bip39-passphrase
-
       - name: Check program (native target)
         run: cargo check
 
@@ -57,7 +46,9 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
       - name: Run audit
-        run: cargo audit --config .cargo/audit.toml
+        # RUSTSEC-2024-0344: curve25519-dalek 3.x timing side-channel — transitive
+        # Solana SDK dep, cannot be upgraded without breaking anchor-lang 0.30.1.
+        run: cargo audit --ignore RUSTSEC-2024-0344
 
   # ─── Frontend ────────────────────────────────────────────────────────
   lint-and-typecheck:
