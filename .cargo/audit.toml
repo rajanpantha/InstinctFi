@@ -1,0 +1,9 @@
+[advisories]
+# RUSTSEC-2024-0344: Timing side-channel in curve25519-dalek 3.x
+# This is a transitive dependency pulled in by the Solana SDK (anchor-lang 0.30.1).
+# It cannot be upgraded without breaking the entire Solana dependency chain.
+# The vulnerability is a timing side-channel in scalar multiplication; it is not
+# exploitable in this context because InstinctFi does not perform any cryptographic
+# operations using curve25519-dalek directly — all signing is handled by the user's
+# wallet (Phantom) outside this program.
+ignore = ["RUSTSEC-2024-0344"]

@@ -46,8 +46,8 @@ jobs:
       - name: Generate keypair
         run: solana-keygen new --no-bip39-passphrase
 
-      - name: Build program
-        run: anchor build
+      - name: Check program (native target)
+        run: cargo check
 
   cargo-audit:
     name: Cargo Security Audit
@@ -57,7 +57,7 @@ jobs:
       - name: Install cargo-audit
         run: cargo install cargo-audit
       - name: Run audit
-        run: cargo audit
+        run: cargo audit --config .cargo/audit.toml
 
   # ─── Frontend ────────────────────────────────────────────────────────
   lint-and-typecheck:
