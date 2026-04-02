@@ -64,7 +64,7 @@ const nextConfig = {
               "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
               "font-src 'self' https://fonts.gstatic.com",
               "img-src 'self' data: blob: https://*.supabase.co http://localhost:* http://127.0.0.1:*",
-              "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.devnet.solana.com https://api.mainnet-beta.solana.com https://faucet.solana.com",
+              "connect-src 'self' https://*.supabase.co wss://*.supabase.co https://api.devnet.solana.com https://api.mainnet-beta.solana.com https://faucet.solana.com https://fonts.googleapis.com https://fonts.gstatic.com",
               "frame-ancestors 'none'",
             ].join("; "),
           },

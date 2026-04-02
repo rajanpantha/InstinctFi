@@ -35,8 +35,14 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
+  // Ignore non-http(s) schemes (e.g. chrome-extension://) — they can't be cached
+  const reqUrl = event.request.url;
+  if (!reqUrl.startsWith("http://") && !reqUrl.startsWith("https://")) {
+    return;
+  }
+
   // Network-first for API and data requests
-  if (event.request.url.includes("/api/") || event.request.method !== "GET") {
+  if (reqUrl.includes("/api/") || event.request.method !== "GET") {
     return;
   }
 
@@ -71,12 +77,15 @@ self.addEventListener("fetch", (event) => {
           }
           return response;
         })
-        .catch(() => {
+        .catch(async () => {
           // If both network and cache fail, show offline page for navigations
           if (event.request.mode === "navigate") {
-            return caches.match("/offline.html");
+            const offlinePage = await caches.match("/offline.html");
+            if (offlinePage) return offlinePage;
           }
-          return cached;
+          if (cached) return cached;
+          // Last resort: return a proper error Response to avoid "Failed to convert value to 'Response'"
+          return new Response("Network error", { status: 503, statusText: "Service Unavailable" });
         });
 
       return cached || fetchPromise;

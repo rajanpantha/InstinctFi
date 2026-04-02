@@ -433,8 +433,8 @@ export async function buildAdminEditPollIx(
         programId: PROGRAM_ID,
         keys: [
             { pubkey: admin, isSigner: true, isWritable: true },
-            { pubkey: pollPDA, isSigner: false, isWritable: true },
             { pubkey: platformConfigPDA, isSigner: false, isWritable: false },
+            { pubkey: pollPDA, isSigner: false, isWritable: true },
         ],
         data,
     });
@@ -553,10 +553,10 @@ export async function buildAdminSettlePollIx(
         programId: PROGRAM_ID,
         keys: [
             { pubkey: admin, isSigner: true, isWritable: true },
+            { pubkey: platformConfigPDA, isSigner: false, isWritable: false },
             { pubkey: pollCreator, isSigner: false, isWritable: true },
             { pubkey: pollPDA, isSigner: false, isWritable: true },
             { pubkey: treasuryPDA, isSigner: false, isWritable: true },
-            { pubkey: platformConfigPDA, isSigner: false, isWritable: false },
             { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
         ],
         data,

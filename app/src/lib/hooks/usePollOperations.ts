@@ -442,6 +442,41 @@ export function usePollOperations({
                 }
             }
 
+            // ── On-chain field length validation (matches Solana program limits) ──
+            const finalTitle = updates.title ?? poll.title;
+            const finalDesc = updates.description ?? poll.description;
+            const finalCategory = updates.category ?? poll.category;
+            const finalImageUrl = updates.imageUrl ?? poll.imageUrl;
+            const finalOptions = updates.options ?? poll.options;
+            const finalEndTime = updates.endTime ?? poll.endTime;
+
+            if (new TextEncoder().encode(finalTitle).length > 64) {
+                toast.error("Title exceeds 64 bytes (on-chain limit). Shorten it before editing.", { id: "edit-poll" });
+                operationLock.current.delete(lockKey); return false;
+            }
+            if (new TextEncoder().encode(finalDesc).length > 256) {
+                toast.error("Description exceeds 256 bytes (on-chain limit). Shorten it before editing.", { id: "edit-poll" });
+                operationLock.current.delete(lockKey); return false;
+            }
+            if (new TextEncoder().encode(finalCategory).length > 32) {
+                toast.error("Category exceeds 32 bytes (on-chain limit).", { id: "edit-poll" });
+                operationLock.current.delete(lockKey); return false;
+            }
+            if (new TextEncoder().encode(finalImageUrl).length > 256) {
+                toast.error("Image URL exceeds 256 bytes (on-chain limit).", { id: "edit-poll" });
+                operationLock.current.delete(lockKey); return false;
+            }
+            for (const opt of finalOptions) {
+                if (new TextEncoder().encode(opt).length > 32) {
+                    toast.error(`Option "${opt.slice(0, 20)}..." exceeds 32 bytes (on-chain limit).`, { id: "edit-poll" });
+                    operationLock.current.delete(lockKey); return false;
+                }
+            }
+            if (admin && finalEndTime <= Math.floor(Date.now() / 1000)) {
+                toast.error("New end time must be in the future.", { id: "edit-poll" });
+                operationLock.current.delete(lockKey); return false;
+            }
+
             const updatedPoll: DemoPoll = {
                 ...poll,
                 title: updates.title ?? poll.title,
@@ -508,14 +543,16 @@ export function usePollOperations({
                     return false;
                 }
 
-                // ── Background: confirm tx landed on-chain ──
-                confirmTransactionBg(sig).then(confirmed => {
-                    if (!confirmed) {
-                        console.warn("Edit poll tx not confirmed — will re-sync on next fetch");
-                    }
-                }).catch(e => console.warn("Background confirm failed:", e));
+                // ── Wait for on-chain confirmation before applying update ──
+                // Edit operations must confirm on-chain to prevent stale optimistic
+                // state when the transaction is silently rejected (skipPreflight=true).
+                const confirmed = await confirmTransactionBg(sig);
+                if (!confirmed) {
+                    toast.error("Edit transaction failed on-chain. Please try again.", { id: "edit-poll" });
+                    return false;
+                }
 
-                // ── Apply update optimistically ──
+                // ── Apply update after confirmation ──
                 setPolls(prev => prev.map(p => p.id === pollId ? updatedPoll : p));
                 markMutation();
 
